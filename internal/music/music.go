@@ -299,11 +299,30 @@ type RemoteState struct {
 // PlayerEvent is what the player did, told to sources that export onEvent.
 // Times are in milliseconds.
 type PlayerEvent struct {
-	Type     string `json:"type"` // play, pause, trackChange, ended or seek
+	Type     string `json:"type"` // play, pause, trackChange, seek or ended
 	TrackID  string `json:"trackId,omitempty"`
-	Position int64  `json:"position,omitempty"` // where the track is, with no track yet, where it goes
+	Position int64  `json:"position,omitempty"` // where the track is, in ms
 	Duration int64  `json:"duration,omitempty"` // how long the track is, in ms
+	// Seconds are how much of the track was heard, as an ended event says.
+	Seconds float64 `json:"seconds,omitempty"`
+	// Reason is why the play ended, as an ended event says.
+	Reason EndReason `json:"reason,omitempty"`
 }
+
+// EndReason is why a play of a track ended.
+type EndReason string
+
+const (
+	// EndFinished is a play that went to the track's end.
+	EndFinished EndReason = "ended"
+	// EndSkipped is a play that something else took the place of, or the
+	// same track again from its start.
+	EndSkipped EndReason = "skipped"
+	// EndStopped is a play that stopped at the other end, playing remotely.
+	EndStopped EndReason = "stopped"
+	// EndQuit is a play the app quit in the middle of.
+	EndQuit EndReason = "quit"
+)
 
 // An Observer is a source that wants to hear what the player does as it does
 // it, for scrobbling, a sleep timer and the like. What it hears comes in

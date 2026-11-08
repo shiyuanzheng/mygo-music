@@ -78,7 +78,7 @@ Export a function for each thing the plugin does. Each takes one object of param
 | `suggest` | `{query}` | `[string]` |
 | `recent` | | `[Track]` |
 | `played` | `{id}` | |
-| `onEvent` | what the player did: `{type, trackId, position, duration}` | hears play, pause, trackChange, seek and ended, as they happen, in order, while the plugin runs. What it doesn't keep up with is dropped, and it answers nothing |
+| `onEvent` | what the player did: `{type, trackId, position, duration}` | hears play, pause, trackChange, seek and ended, as they happen, in order, while the plugin runs. What it doesn't keep up with is dropped, and it answers nothing. An `ended` event also says `seconds`, how much of the track was heard — without the pauses, the waits for its audio or what a seek jumped over, and with what a seek back played again — and `reason`: `ended` once it played to its end, `skipped` once something else plays, or the same track again, `stopped` once a remote plugin's song stopped at the other end, and `quit` as the app quits, which waits up to two seconds for the plugin |
 | `liked` | `{offset}` | `{tracks, more}` |
 | `isLiked` | `{ids}` | `{id: bool}` |
 | `like`, `likeEpisode` | `{id, on}` | `like` likes a song, and `likeEpisode` an episode: without it, episodes show no heart |

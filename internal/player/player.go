@@ -102,6 +102,12 @@ type Player struct {
 
 	recorded string // the track last told its source it played
 
+	// A play of the current track under way, for how much of it was heard
+	// (heard.go): heard so far, to mark.
+	listening bool
+	heard     time.Duration
+	mark      time.Duration
+
 	ahead *ahead // the next track's audio, asked for before its turn
 }
 
@@ -178,10 +184,11 @@ func (p *Player) announce(t *music.Track, artwork []byte) {
 }
 
 func (p *Player) ended() {
-	p.hear("ended")
+	p.endPlay(music.EndFinished, p.Position())
 	if p.repeat == RepeatOne {
 		p.out.Seek(0)
 		p.out.Play()
+		p.listen()
 		return
 	}
 	if p.at+1 >= len(p.order) && p.feed != nil {
@@ -500,10 +507,13 @@ func (p *Player) TogglePlay() {
 	p.hear("play")
 	if !p.seeking && !out.Playing() {
 		if out.Position() >= out.Duration()-time.Second {
+			// Again from its start: another play.
+			p.endPlay(music.EndSkipped, out.Position())
 			out.Seek(0)
 		}
 		out.Play()
 	}
+	p.listen()
 	p.fade.fade(1, fadeIn, nil)
 	p.sync()
 }
@@ -517,6 +527,7 @@ const seekGap = 30 * time.Millisecond
 // which the audio player fades over a few milliseconds, rather than
 // cutting from one sound to the other with a click.
 func (p *Player) Seek(t time.Duration) {
+	p.jumped(t)
 	if p.remote != nil && p.remote.started {
 		p.remoteSeek(t)
 		return
@@ -654,6 +665,7 @@ func (p *Player) load(at int) {
 // stopForFeed stops what plays, at the end of a radio's queue, while its feed
 // gives more.
 func (p *Player) stopForFeed() {
+	p.endPlay(music.EndSkipped, p.Position())
 	if was := p.remote; was != nil && was.started && p.playing {
 		p.command(was.src, was.src.RemotePause)
 	}
@@ -687,6 +699,7 @@ func (p *Player) record() {
 // loadSkipping loads the track at order[at], to play or not, from from,
 // skipping those that cannot play the way dir goes: skipped of them so far.
 func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duration) {
+	p.endPlay(music.EndSkipped, p.Position())
 	t := p.queue[p.order[at]]
 	src := p.sourceOf(&t)
 	if was := p.remote; was != nil && was.started && p.playing && (src == nil || src.Info().ID != was.src.Info().ID) {

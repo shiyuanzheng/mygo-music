@@ -51,6 +51,9 @@ const (
 	stuckAfter = time.Second
 	// memoryLimit is what a plugin may keep. Passing it restarts the plugin.
 	memoryLimit = 256 << 20
+	// quitWait is how long quitting waits for a plugin to hear how its last
+	// play went.
+	quitWait = 2 * time.Second
 )
 
 // Permissions are what a plugin asks for beyond its own sandbox.
@@ -188,6 +191,18 @@ func (p *Plugin) OnSignInPrompt(show func(music.SignInPrompt)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.prompt = show
+}
+
+// ObserveSync tells the plugin what the player did, and waits for it to have
+// heard, as quitting does: what the plugin hears must be said before the app
+// goes on. It starts the plugin, as the rest of what the app asks does.
+func (p *Plugin) ObserveSync(ev music.PlayerEvent) {
+	if !p.exports["onEvent"] {
+		return
+	}
+	if err := p.callWithin(quitWait, "onEvent", ev, nil); err != nil {
+		log.Printf("plugin %s: onEvent: %v", p.manifest.ID, err)
+	}
 }
 
 // Observe tells the plugin what the player did, if it wants to know (it

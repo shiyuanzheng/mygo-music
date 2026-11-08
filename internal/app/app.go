@@ -322,6 +322,19 @@ func (a *app) playerEvent(ev music.PlayerEvent) {
 	}
 }
 
+// playerEventWait tells the plugins that are on what the player did, and
+// waits for each, as quitting does: what the plugin hears must be said before
+// the app goes on.
+func (a *app) playerEventWait(ev music.PlayerEvent) {
+	for _, lib := range a.libs {
+		if o, ok := lib.src.(interface {
+			ObserveSync(music.PlayerEvent)
+		}); ok {
+			o.ObserveSync(ev)
+		}
+	}
+}
+
 // playerState answers how playback is going, on the main thread.
 func (a *app) playerState() plugin.PlayerState {
 	st := plugin.PlayerState{Playing: a.pl.Playing(), Volume: int(a.volume*100 + 0.5)}
@@ -485,7 +498,20 @@ func Run() error {
 		if a.tray != nil {
 			a.tray.Destroy()
 		}
+		// The plugin playing hears how its last song went before its source
+		// closes: the app is on its way out, so it's told and waited for.
+		if ev := a.pl.Quit(); ev != nil {
+			a.playerEventWait(*ev)
+		}
 		a.closeSources()
+	})
+	// Shutting down, Windows ends the app without OnWillQuit.
+	mygo.App.OnQuit(func() {
+		if a.pl != nil {
+			if ev := a.pl.Quit(); ev != nil {
+				a.playerEventWait(*ev)
+			}
+		}
 	})
 	mygo.App.OnWindowAllClosed(func() {})
 	mygo.App.OnActivate(func(bool) { a.showMain() })

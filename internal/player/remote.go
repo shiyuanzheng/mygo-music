@@ -141,6 +141,7 @@ func (p *Player) loadRemote(gen int, src music.Source, at, skipped, dir int, pla
 			p.pending = 0
 			if p.playing {
 				p.record()
+				p.listen()
 				p.remotePoll(r)
 			} else {
 				// Paused while it was on its way.
@@ -197,6 +198,7 @@ func (p *Player) remoteToggle() {
 	}
 	p.playing = true
 	r.running, r.at, r.command = true, p.now(), p.now()
+	p.listen()
 	p.command(r.src, r.src.RemoteResume)
 	p.remotePoll(r)
 	p.sync()
@@ -287,7 +289,11 @@ func (p *Player) remoteAnswered(r *remote, st *music.RemoteState, err error) {
 			p.remotePoll(r)
 			return
 		}
-		p.remoteEnded(r)
+		why := music.EndStopped
+		if r.near {
+			why = music.EndFinished
+		}
+		p.remoteEnded(r, why)
 	case st.TrackID != "" && st.TrackID != p.track.ID:
 		if waiting {
 			p.remotePoll(r)
@@ -305,7 +311,7 @@ func (p *Player) remoteAnswered(r *remote, st *music.RemoteState, err error) {
 			end = p.track.Length()
 		}
 		if r.near || end > 0 && pos >= end-remoteEndZone {
-			p.remoteEnded(r)
+			p.remoteEnded(r, music.EndFinished)
 			return
 		}
 		// Paused there, by the listener at the other end.
@@ -334,6 +340,14 @@ func (p *Player) remoteGoes(r *remote, st *music.RemoteState, settling bool) {
 	}
 	before := p.remotePosition()
 	pos := time.Duration(st.Position) * time.Millisecond
+	switch d := pos - before; {
+	case d > remoteDrift, d < -remoteDrift && pos < r.pos:
+		// Moved at the other end: what it jumped over wasn't heard.
+		p.jumped(pos)
+	case d < -remoteDrift && p.listening:
+		// Slower than the clock: heard only as far as it got.
+		p.heardTo(pos)
+	}
 	duration := time.Duration(st.Duration) * time.Millisecond
 	shown := duration > 0 && duration != r.duration
 	if duration > 0 {
@@ -354,9 +368,10 @@ func (p *Player) remoteGoes(r *remote, st *music.RemoteState, settling bool) {
 	}
 }
 
-// remoteEnded goes on from the track the source finished, by the queue's order
-// and the listener's repeat.
-func (p *Player) remoteEnded(r *remote) {
+// remoteEnded goes on from the track the source finished, or stopped, by the
+// queue's order and the listener's repeat.
+func (p *Player) remoteEnded(r *remote, why music.EndReason) {
+	p.endPlay(why, p.remotePosition())
 	switch {
 	case p.repeat == RepeatOne:
 		p.load(p.at)
@@ -380,16 +395,23 @@ func (p *Player) remoteEnded(r *remote) {
 // isn't the app's to show: it stops following.
 func (p *Player) remoteMoved(r *remote, st *music.RemoteState) {
 	defer p.post(func() {})
+	why := music.EndSkipped
+	if r.near {
+		why = music.EndFinished
+	}
 	if p.repeat == RepeatOne {
+		p.endPlay(why, p.remotePosition())
 		p.load(p.at)
 		return
 	}
 	for k, i := range p.order {
 		if p.queue[i].ID == st.TrackID && p.queue[i].Source == p.track.Source {
+			p.endPlay(why, p.remotePosition())
 			p.follow(r, k, st)
 			return
 		}
 	}
+	p.endPlay(music.EndStopped, p.remotePosition())
 	r.pos, r.at = p.remotePositionStopped(r), p.now()
 	p.playing = false
 	p.err = i18n.T("Playing something else elsewhere")
@@ -415,6 +437,7 @@ func (p *Player) follow(r *remote, at int, st *music.RemoteState) {
 	p.loadLyrics(gen, r.src, t)
 	p.recorded = ""
 	p.record()
+	p.listen()
 	p.remotePoll(r)
 	p.sync()
 }

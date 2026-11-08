@@ -37,7 +37,6 @@ func TestPlayerControl(t *testing.T) {
 		},
 	})
 	defer SetPlayerControl(nil)
-
 	p := load(t, `{"id":"x","permissions":{"player":true}}`, `
 export function suggest() {
   host.player.play();
@@ -67,19 +66,21 @@ export async function search() {
 
 // What the player does reaches a plugin that exports onEvent, in order, and
 // starts it if it hadn't: a plugin that only hears needs no pages of its own.
+// An ended event says how much was heard and why it ended.
 func TestObserve(t *testing.T) {
 	p := load(t, plain, `
 export function onEvent(ev) { host.storage.set("last", ev); }
 export function suggest() {
   const ev = host.storage.get("last");
-  return [ev ? ev.type : "none"];
+  return [ev ? [ev.type, String(ev.seconds), String(ev.reason)].join(",") : "none"];
 }`)
 	p.Observe(music.PlayerEvent{Type: "play", TrackID: "1", Position: 1000})
 	p.Observe(music.PlayerEvent{Type: "pause", TrackID: "1", Position: 2000})
+	p.Observe(music.PlayerEvent{Type: "ended", TrackID: "1", Seconds: 83.25, Reason: music.EndSkipped})
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		got, err := p.Suggest("")
-		if err == nil && len(got) == 1 && got[0] == "pause" {
+		if err == nil && len(got) == 1 && got[0] == "ended,83.25,skipped" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -89,6 +90,21 @@ export function suggest() {
 	}
 	if p.vm == nil {
 		t.Error("the events didn't start the plugin")
+	}
+}
+
+// What the app tells as it quits, it tells at once, and waits for.
+func TestObserveSync(t *testing.T) {
+	p := load(t, plain, `
+export function onEvent(ev) { host.storage.set("last", ev); }
+export function suggest() {
+  const ev = host.storage.get("last");
+  return [ev ? [ev.type, String(ev.seconds), String(ev.reason)].join(",") : "none"];
+}`)
+	p.ObserveSync(music.PlayerEvent{Type: "ended", TrackID: "t1", Seconds: 83.25, Reason: music.EndSkipped})
+	got, err := p.Suggest("")
+	if err != nil || got[0] != "ended,83.25,skipped" {
+		t.Fatalf("the plugin heard %v, %v", got, err)
 	}
 }
 

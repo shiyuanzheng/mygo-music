@@ -292,12 +292,13 @@ export function remoteUse() {}
 // What the player does, as it does it: onEvent hears it, and host.player
 // drives it, which takes the player permission in plugin.json. This one
 // remembers the last track played and quiets the player when a song ends.
-export function onEvent({ type, trackId, position }) {
+export function onEvent({ type, trackId, position, seconds, reason }) {
   console.log("player did", type, trackId, position);
   if (type === "trackChange") {
     save("lastTrack", trackId);
   }
   if (type === "ended") {
+    console.log(`heard ${seconds}s of ${trackId}: ${reason}`);
     host.player.setVolume(20);
   }
 }

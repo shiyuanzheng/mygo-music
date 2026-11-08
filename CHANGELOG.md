@@ -6,7 +6,7 @@ All notable changes to MyGo Music are written down here. Versions follow [Semant
 
 ### Added
 
-- Plugins can hear what the player does, as it does it, with the new `onEvent` export: play, pause, trackChange, seek and ended, in order, what a plugin doesn't keep up with dropped. And with the new `player` permission, `host.player` drives the player as the listener would: `play`, `pause`, `seek` and `setVolume`, and `state` answers how playback is going.
+- Plugins can hear what the player does, as it does it, with the new `onEvent` export: play, pause, trackChange, seek and ended, in order, what a plugin doesn't keep up with dropped. An `ended` event says how much of the track was heard (`seconds`), without the pauses, the waits for its audio or what a seek jumped over, and why it ended (`reason`: `ended`, `skipped`, `stopped` or `quit`). And with the new `player` permission, `host.player` drives the player as the listener would: `play`, `pause`, `seek` and `setVolume`, and `state` answers how playback is going.
 
 ## [0.1.22] - 2026-11-07
 
