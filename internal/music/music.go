@@ -296,6 +296,22 @@ type RemoteState struct {
 	Device   string `json:"device,omitempty"`
 }
 
+// PlayerEvent is what the player did, told to sources that export onEvent.
+// Times are in milliseconds.
+type PlayerEvent struct {
+	Type     string `json:"type"` // play, pause, trackChange, ended or seek
+	TrackID  string `json:"trackId,omitempty"`
+	Position int64  `json:"position,omitempty"` // where the track is, with no track yet, where it goes
+	Duration int64  `json:"duration,omitempty"` // how long the track is, in ms
+}
+
+// An Observer is a source that wants to hear what the player does as it does
+// it, for scrobbling, a sleep timer and the like. What it hears comes in
+// order, on a goroutine of its own, and it answers nothing.
+type Observer interface {
+	Observe(PlayerEvent)
+}
+
 // Playback is how a source's tracks get heard.
 type Playback string
 

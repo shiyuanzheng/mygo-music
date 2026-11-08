@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MoeForge/moejs"
@@ -63,6 +64,86 @@ var webSignIn = func(WebSignIn) (string, error) { return "", errors.New("can't s
 
 // SetWebSignIn says how to show a sign-in page, and get its cookies.
 func SetWebSignIn(show func(WebSignIn) (string, error)) { webSignIn = show }
+
+// PlayerControl is how host.player drives the player: what the listener
+// could do by hand. Its methods may be called from any goroutine; the app
+// makes them safe. The app sets it, with none where there's no player, as in
+// tests.
+type PlayerControl struct {
+	// Play plays what's paused, and Pause pauses what plays.
+	Play, Pause func()
+	// Seek moves to where the track is asked for, in milliseconds.
+	Seek func(ms int64)
+	// SetVolume takes how loud it plays, 0 to 100.
+	SetVolume func(percent int)
+	// State answers how playback is going, without waiting long.
+	State func() PlayerState
+}
+
+// PlayerState is how playback is going, as host.player.state answers. Times
+// are in milliseconds.
+type PlayerState struct {
+	Playing  bool   `json:"playing"`
+	TrackID  string `json:"trackId,omitempty"`
+	Position int64  `json:"position,omitempty"` // where the track is
+	Duration int64  `json:"duration,omitempty"` // how long the track is
+	Volume   int    `json:"volume"`             // 0 to 100
+}
+
+// playerControl is the player, as the app set it. Nil where there's none.
+var playerControl atomic.Pointer[PlayerControl]
+
+// SetPlayerControl says how host.player drives the player.
+func SetPlayerControl(pc *PlayerControl) { playerControl.Store(pc) }
+
+// needPlayer answers the player to drive, if the plugin may: with the
+// permission, and the player there for it.
+func (p *Plugin) needPlayer() (*PlayerControl, error) {
+	if !p.manifest.Permissions.Player {
+		return nil, errors.New("host.player needs the player permission")
+	}
+	pc := playerControl.Load()
+	if pc == nil {
+		return nil, errors.New("the player isn't reachable here")
+	}
+	return pc, nil
+}
+
+// playerDo is a host.player function: with the player there to drive and the
+// number it takes, if any, it does its thing and answers nothing.
+func (p *Plugin) playerDo(what string, do func(pc *PlayerControl, n float64)) native {
+	return func(_ *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+		pc, err := p.needPlayer()
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		n := moejs.Arg(args, 0)
+		if !n.IsNullish() && !n.IsNumber() {
+			return moejs.Undefined(), fmt.Errorf("host.player.%s takes a number", what)
+		}
+		do(pc, n.AsNumber())
+		return moejs.Undefined(), nil
+	}
+}
+
+// playerState answers how playback is going, which may take the app a moment
+// to ask its main thread for.
+func (p *Plugin) playerState(v *vm) native {
+	return func(_ *moejs.Realm, _ moejs.Value, _ []moejs.Value) (moejs.Value, error) {
+		pc, err := p.needPlayer()
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		promise, settle := v.loop.NewPromise()
+		go func() {
+			st := pc.State()
+			settle(func(rt *moejs.Runtime) (moejs.Value, error) {
+				return rt.FromGo(st)
+			})
+		}()
+		return promise, nil
+	}
+}
 
 type native = func(*moejs.Realm, moejs.Value, []moejs.Value) (moejs.Value, error)
 
@@ -153,6 +234,17 @@ func (p *Plugin) installHost(v *vm) error {
 		"waitForRedirect": moejs.NativeFunc(p.waitForRedirect(v)),
 		"webSignIn":       moejs.NativeFunc(p.webSignIn(v)),
 		"spawn":           moejs.NativeFunc(p.spawn(v)),
+		"player": map[string]any{
+			// play and pause, by what's going already: play on what's
+			// paused, and pause on what plays, as the listener would.
+			"play":      moejs.NativeFunc(p.playerDo("play", func(pc *PlayerControl, _ float64) { pc.Play() })),
+			"pause":     moejs.NativeFunc(p.playerDo("pause", func(pc *PlayerControl, _ float64) { pc.Pause() })),
+			"seek":      moejs.NativeFunc(p.playerDo("seek", func(pc *PlayerControl, ms float64) { pc.Seek(int64(ms)) })),
+			"setVolume": moejs.NativeFunc(p.playerDo("setVolume", func(pc *PlayerControl, v float64) { pc.SetVolume(int(v)) })),
+			// state answers how playback is going, which may take the app a
+			// moment to ask its main thread for.
+			"state": moejs.NativeFunc(p.playerState(v)),
+		},
 	})
 }
 

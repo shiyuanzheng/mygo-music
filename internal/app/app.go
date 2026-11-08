@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -310,6 +311,26 @@ func (a *app) sourceByID(id string) music.Source {
 	return nil
 }
 
+// playerEvent tells the plugins that are on what the player did, as it did
+// it. It runs on the main thread; each plugin takes what it hears from there
+// on its own.
+func (a *app) playerEvent(ev music.PlayerEvent) {
+	for _, lib := range a.libs {
+		if o, ok := lib.src.(music.Observer); ok {
+			o.Observe(ev)
+		}
+	}
+}
+
+// playerState answers how playback is going, on the main thread.
+func (a *app) playerState() plugin.PlayerState {
+	st := plugin.PlayerState{Playing: a.pl.Playing(), Volume: int(a.volume*100 + 0.5)}
+	if t := a.pl.Current(); t != nil {
+		st.TrackID, st.Position, st.Duration = t.ID, a.pl.Position().Milliseconds(), a.pl.Duration().Milliseconds()
+	}
+	return st
+}
+
 // closeSources stops the plugins, which end with the app.
 func (a *app) closeSources() {
 	for _, p := range a.plugins {
@@ -353,6 +374,45 @@ func Run() error {
 			a.keepSession()
 			a.syncCaptions()
 		}
+		// Plugins hear what the player does, and reach it: what they may
+		// only with the player permission in plugin.json.
+		a.pl.Hear = a.playerEvent
+		plugin.SetPlayerControl(&plugin.PlayerControl{
+			// These come from the plugin's goroutines; RunOnMain takes them
+			// where the player's methods run, as a.pl.Quiet does.
+			Play: func() {
+				mygo.RunOnMain(func() {
+					if !a.pl.Playing() {
+						a.pl.TogglePlay()
+					}
+				})
+			},
+			Pause: func() {
+				mygo.RunOnMain(func() {
+					if a.pl.Playing() {
+						a.pl.TogglePlay()
+					}
+				})
+			},
+			Seek: func(ms int64) { mygo.RunOnMain(func() { a.pl.Seek(time.Duration(ms) * time.Millisecond) }) },
+			SetVolume: func(percent int) {
+				mygo.RunOnMain(func() {
+					a.volume = min(max(float64(percent), 0), 100) / 100
+					a.pl.SetVolume(a.volume)
+				})
+			},
+			State: func() plugin.PlayerState {
+				asked := make(chan plugin.PlayerState, 1)
+				mygo.RunOnMain(func() { asked <- a.playerState() })
+				select {
+				case st := <-asked:
+					return st
+				case <-time.After(2 * time.Second):
+					// The app is busy or on its way out: nothing known.
+					return plugin.PlayerState{}
+				}
+			},
+		})
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
 		a.win = mygo.NewWindow(mygo.WindowOptions{

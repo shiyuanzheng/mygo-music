@@ -12,7 +12,7 @@ A native desktop music player written in Go with [MyGo](https://github.com/egois
 - Session restore
 - Podcast captions, written down on the device as episodes play
 - English and Simplified Chinese
-- Plugins can add accounts, catalogs, podcasts, stations, comments and pages of their own
+- Plugins can add accounts, catalogs, podcasts, stations, comments and pages of their own, and hear what the player does and drive it, as the listener would
 
 ## Build
 
@@ -78,6 +78,7 @@ Export a function for each thing the plugin does. Each takes one object of param
 | `suggest` | `{query}` | `[string]` |
 | `recent` | | `[Track]` |
 | `played` | `{id}` | |
+| `onEvent` | what the player did: `{type, trackId, position, duration}` | hears play, pause, trackChange, seek and ended, as they happen, in order, while the plugin runs. What it doesn't keep up with is dropped, and it answers nothing |
 | `liked` | `{offset}` | `{tracks, more}` |
 | `isLiked` | `{ids}` | `{id: bool}` |
 | `like`, `likeEpisode` | `{id, on}` | `like` likes a song, and `likeEpisode` an episode: without it, episodes show no heart |
@@ -160,6 +161,9 @@ A plugin has the JavaScript standard library, timers, `fetch` and its relatives,
 | `host.waitForRedirect({port, path, timeout, page})` | the end of a browser sign-in: listens on `127.0.0.1` and answers the query it's redirected back with. Needs the network permission |
 | `host.webSignIn({url, cookiesOf, until, userAgent})` | a sign-in on the service's own page, for one that has no other way in: the app shows `url` in a window of its own, apart from every other page and forgotten after, and once the cookies named in `until` are all there, closes it and answers `{cookie}`, the Cookie header a request to `cookiesOf` would send. `cookiesOf` has to be a host the network permission reaches. `userAgent` is what the page is told it's shown in |
 | `host.spawn(command, args)` | starts a program, by a path from the plugin's folder or absolute, or a name on `PATH`. Needs the process permission to name it. Returns `{pid, write(text), closeStdin(), readLine(), wait(), kill(), errorOutput()}` |
+| `host.player.play()`, `.pause()` | plays what's paused, and pauses what plays, as the listener would. Needs the player permission |
+| `host.player.seek(ms)`, `.setVolume(0-100)` | where in the track to go, and how loud to play. They need the player permission |
+| `host.player.state()` | how playback is going, as a promise of `{playing, trackId, position, duration, volume}`. It needs the player permission |
 
 Everything else takes a permission in `plugin.json`:
 
@@ -175,6 +179,7 @@ Everything else takes a permission in `plugin.json`:
 
   `hosts` are hosts or `*.domain`, which the network permission has to reach, or `{setting:key}`, the host of the server a setting names, such as `https://nas.local:5666`, while the network permission reaches it. `*` isn't one. Without `kinds`, they go with both. In `headers`, `{setting:key}` is what the listener filled in and `{storage:key}` what the plugin keeps with `host.storage`, as each is when the request goes out: a token the plugin stores anew goes with the next one, and none is kept in a URL. A header whose value isn't there yet, as before signing in, is left out. The headers a `stream` answers come first. Neither goes on to another host a request is redirected to.
 - `"process": ["bin/helper-*", "ffmpeg"]` lists the programs `host.spawn` can start, for what JavaScript can't do: a path from the plugin's folder or absolute, or a name looked up on `PATH`. A path only matches a path and a name only a name, and `*` matches within one folder, as in a glob. `["*"]`, or `true`, asks for any program, which the listener is warned about. The listener has to allow it in Settings first, as a program can do anything they can. Programs end when the plugin does, and once allowed, `fetch` can reach this machine too, to talk to them. Ship one binary per platform and pick it with `host.platform` and `host.arch`.
+- `"player": true` lets `host.player` drive the player, as the listener would: play, pause, seek and set the volume. Hearing what it does, as `onEvent`, takes no permission — the app only tells it, as it tells `played`.
 
 ## Credits
 

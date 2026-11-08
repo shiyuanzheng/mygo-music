@@ -60,6 +60,8 @@ type Permissions struct {
 	Network []string `json:"network,omitempty"`
 	// Process lists the programs it may start, once the listener granted it.
 	Process Programs `json:"process,omitempty"`
+	// Player lets host.player drive the player, as the listener would.
+	Player bool `json:"player,omitempty"`
 }
 
 // Programs are what a plugin may start: each a path from its directory or
@@ -172,6 +174,13 @@ type Plugin struct {
 	granted  bool // the listener let it start programs
 	vm       *vm
 	prompt   func(music.SignInPrompt)
+	// heard is what onEvent hears, in order, nil until the plugin has
+	// something to hear. It's taken to the plugin on a goroutine of its own,
+	// and what it didn't keep up with is dropped.
+	heard chan music.PlayerEvent
+	// stopped says Close ran: the plugin hears nothing more until it runs
+	// again.
+	stopped bool
 }
 
 // OnSignInPrompt says what to do with what the plugin wants shown as it signs in.
@@ -179,6 +188,45 @@ func (p *Plugin) OnSignInPrompt(show func(music.SignInPrompt)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.prompt = show
+}
+
+// Observe tells the plugin what the player did, if it wants to know (it
+// exports onEvent). What it hears comes in order, on a goroutine of its own,
+// and what it doesn't keep up with is dropped, so a slow plugin can't hold up
+// the player. It's safe from any goroutine.
+func (p *Plugin) Observe(ev music.PlayerEvent) {
+	if !p.exports["onEvent"] {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return
+	}
+	if p.heard == nil {
+		p.heard = make(chan music.PlayerEvent, 32)
+		heard := p.heard
+		go func() {
+			for ev := range heard {
+				// Close heard, and with it this: rather than have what's
+				// still here start the plugin again.
+				p.mu.Lock()
+				off := p.stopped
+				p.mu.Unlock()
+				if off {
+					return
+				}
+				if err := p.call("onEvent", ev, nil); err != nil {
+					log.Printf("plugin %s: onEvent: %v", p.manifest.ID, err)
+				}
+			}
+		}()
+	}
+	select {
+	case p.heard <- ev:
+	default:
+		log.Printf("plugin %s: dropped a %s it didn't keep up with", p.manifest.ID, ev.Type)
+	}
 }
 
 // Load reads and compiles the plugin in dir, keeping its data in dataDir,
@@ -363,7 +411,15 @@ func (p *Plugin) Close() {
 	p.mu.Lock()
 	v := p.vm
 	p.vm = nil
+	// It hears nothing more until it runs again, and what it hadn't heard
+	// yet goes unheard.
+	p.stopped = true
+	heard := p.heard
+	p.heard = nil
 	p.mu.Unlock()
+	if heard != nil {
+		close(heard)
+	}
 	if v != nil {
 		v.close()
 	}
@@ -431,6 +487,8 @@ func (p *Plugin) running() (*vm, error) {
 	}
 	p.mu.Lock()
 	p.vm = v
+	// What it hears again, it hears from now on.
+	p.stopped = false
 	p.mu.Unlock()
 	return v, nil
 }
@@ -693,3 +751,4 @@ func (p *Plugin) SetSetting(key, value string) error {
 var _ music.Source = (*Plugin)(nil)
 var _ music.Recorder = (*Plugin)(nil)
 var _ music.Prompter = (*Plugin)(nil)
+var _ music.Observer = (*Plugin)(nil)

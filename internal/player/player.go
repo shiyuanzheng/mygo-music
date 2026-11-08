@@ -45,6 +45,10 @@ type Player struct {
 	// Changed, if set, hears that what plays, where it is or whether it
 	// plays changed.
 	Changed func()
+	// Hear, if set, hears what the listener's player did, as it did it:
+	// play, pause, trackChange, seek and ended. The app tells the plugins
+	// that export onEvent with it.
+	Hear func(music.PlayerEvent)
 
 	queue   []music.Track
 	order   []int // the queue's indices in play order: shuffled or not
@@ -64,7 +68,7 @@ type Player struct {
 	track   *music.Track
 	out     *audio.Player
 	stream  stream
-	watch   *watched // stream, as out plays it
+	watch   *watched      // stream, as out plays it
 	info    *music.Stream // what the current track streams
 	fade    fader
 	gain    float64 // the current track's normalizing gain
@@ -143,6 +147,18 @@ func (p *Player) sync() {
 	mygo.NowPlaying.SetPlayback(state, p.Position())
 }
 
+// hear tells Hear of what just happened, with where the track is.
+func (p *Player) hear(kind string) {
+	if p.Hear == nil {
+		return
+	}
+	ev := music.PlayerEvent{Type: kind, Position: p.Position().Milliseconds(), Duration: p.Duration().Milliseconds()}
+	if p.track != nil {
+		ev.TrackID = p.track.ID
+	}
+	p.Hear(ev)
+}
+
 // announce shows the system the track, and its cover once loaded.
 func (p *Player) announce(t *music.Track, artwork []byte) {
 	state := mygo.PlaybackPaused
@@ -162,6 +178,7 @@ func (p *Player) announce(t *music.Track, artwork []byte) {
 }
 
 func (p *Player) ended() {
+	p.hear("ended")
 	if p.repeat == RepeatOne {
 		p.out.Seek(0)
 		p.out.Play()
@@ -451,6 +468,11 @@ func (p *Player) TogglePlay() {
 		case p.loading:
 			// It plays once loaded, or not.
 			p.playing = !p.playing
+			if p.playing {
+				p.hear("play")
+			} else {
+				p.hear("pause")
+			}
 			p.sync()
 		case len(p.order) > 0:
 			// Again, as for a track that couldn't play.
@@ -461,6 +483,7 @@ func (p *Player) TogglePlay() {
 	out := p.out
 	if p.playing {
 		p.playing = false
+		p.hear("pause")
 		p.fade.fade(0, fadeOut, func() {
 			p.post(func() {
 				if p.out == out && !p.playing {
@@ -474,6 +497,7 @@ func (p *Player) TogglePlay() {
 	}
 	p.playing = true
 	p.record()
+	p.hear("play")
 	if !p.seeking && !out.Playing() {
 		if out.Position() >= out.Duration()-time.Second {
 			out.Seek(0)
@@ -508,6 +532,7 @@ func (p *Player) Seek(t time.Duration) {
 	// the jump, and this one takes its place, playing on from there.
 	if !out.Playing() && !p.seeking {
 		out.Seek(t)
+		p.hear("seek")
 		p.sync()
 		return
 	}
@@ -525,6 +550,7 @@ func (p *Player) Seek(t time.Duration) {
 			if p.playing || !p.fade.silent() {
 				out.Play()
 			}
+			p.hear("seek")
 			p.sync()
 		})
 	})
@@ -678,6 +704,7 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 	p.pending = from
 	p.recorded = ""
 	p.announce(&t, nil)
+	p.hear("trackChange")
 	p.refill()
 
 	p.loadCover(gen, &t)

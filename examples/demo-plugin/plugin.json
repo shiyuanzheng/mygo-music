@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "playback": "stream",
-  "permissions": {},
+  "permissions": { "player": true },
   "settings": [
     {
       "key": "greeting",
